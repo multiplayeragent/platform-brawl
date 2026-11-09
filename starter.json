@@ -1,0 +1,21 @@
+{
+  "name": "Platform Brawl",
+  "genre": "fighting",
+  "dim": "2D",
+  "mode": "Versus",
+  "players": "2–4",
+  "hook": "Knock your rivals off the stage.",
+  "how": "Every hit raises the other fighter's damage, and the higher it is, the farther they fly. Fall off three times and you are out. Last one on the stage wins.",
+  "controls": "Arrow keys with Z and X, or on-screen buttons",
+  "uses": [
+    ["Leaderboard", "The players with the most match wins."],
+    ["Host-run rounds", "The host's browser counts stocks, calls the winner and starts the next match; if it leaves, the next player takes over."],
+    ["Bots", "Bots fill the stage and fight back until enough people join."],
+    ["Live sync", "Every jump, hit and launch shows up for everyone at once."]
+  ],
+  "ideas": [
+    "Add items that drop from the sky",
+    "Add a stage with moving platforms",
+    "Add a character with a double jump"
+  ]
+}

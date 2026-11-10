@@ -181,7 +181,8 @@ function livePlayers() {
   }
   return out.sort();
 }
-const isHost = () => livePlayers()[0] === net.sessionId;
+let wakeHold = 0, lastFrameAt = 0; // a tab whose frames stopped (frozen, or in the background) doesn't act as host, nor for 700ms after it wakes (see frame())
+const isHost = () => livePlayers()[0] === net.sessionId && performance.now() >= wakeHold && !(lastFrameAt && performance.now() - lastFrameAt > 1000);
 
 // ── FIGHTERS ────────────────────────────────────────────────────────────────────────
 function newFighter(id, name, color) {
@@ -610,6 +611,8 @@ document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: fal
 let last = performance.now(), lastHb = 0, lastHud = 0;
 function frame(now) {
   requestAnimationFrame(frame);
+  const realNow = performance.now(); // timed on the real clock: after a long freeze the rAF time can be from before the wake
+  if (lastFrameAt && realNow - lastFrameAt > 1000) { wakeHold = realNow + 700; host.acting = false; host.last = null; } lastFrameAt = realNow; // woke from a freeze or a background tab: another player may have run the match meanwhile, so let their state arrive, then adopt it like a new host
   const dt = Math.max(0, Math.min(0.033, (now - last) / 1000)); last = now; // never negative: the first frame can be stamped before `last`
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
   if (isHost()) hostTick(dt, now); else host.acting = false;
@@ -631,7 +634,7 @@ function frame(now) {
     if (target && (!a || Math.hypot(a.x - target.x, a.y - target.y) < 260)) applyHit(target, msg, by); // only from someone near the one hit
     const v = views.get(msg.to); if (v) burst(v.x, v.y - BODY.h / 2, "#fff", 8, 220);
   });
-  net.on("ko", (msg, from) => { if (host.acting && msg) applyKo(from, Number(msg.n) || 0); });
+  net.on("ko", (msg, from) => { if (host.acting && isHost() && msg) applyKo(from, Number(msg.n) || 0); }); // isHost(): not while my frames are stopped (it writes `match`)
   net.on("again", () => { if (host.acting) host.again = true; });
   net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
   net.onReconnect(() => { dropped = false; });

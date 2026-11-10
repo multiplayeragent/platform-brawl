@@ -609,6 +609,7 @@ document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: fal
 // ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
 let last = performance.now(), lastHb = 0, lastHud = 0;
 function frame(now) {
+  requestAnimationFrame(frame);
   const dt = Math.max(0, Math.min(0.033, (now - last) / 1000)); last = now; // never negative: the first frame can be stamped before `last`
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
   if (isHost()) hostTick(dt, now); else host.acting = false;
@@ -619,7 +620,6 @@ function frame(now) {
   for (let i = kos.length - 1; i >= 0; i--) if ((kos[i].t += dt) > 0.8) kos.splice(i, 1);
   draw(now / 1000);
   if (m && now - lastHud > 120) { lastHud = now; hud(m); }
-  requestAnimationFrame(frame);
 }
 
 (async function start() {

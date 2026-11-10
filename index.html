@@ -21,7 +21,7 @@
   #net { bottom: max(4px, env(safe-area-inset-bottom)); left: 0; right: 0; text-align: center; font-size: 12px; opacity: .75; }
   #over { position: fixed; inset: 0; display: grid; place-items: center; background: #1a0f30a8; }
   #over[hidden], .pad[hidden] { display: none; }
-  .card { width: min(360px, 90vw); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 16px; background: #2b1d4f; border: 1px solid #ffffff2e; text-align: center; }
+  .card { box-sizing: border-box; width: min(402px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 16px; background: #2b1d4f; border: 1px solid #ffffff2e; text-align: center; }
   .card h2 { margin: 0 0 4px; font-size: 28px; color: #ffd166; } .card h3 { margin: 14px 0 4px; font-size: 13px; color: #ff9fd1; text-align: left; }
   .card ol { margin: 0; padding-left: 24px; font-size: 14px; text-align: left; }
   .card li span { float: right; font-variant-numeric: tabular-nums; } .card li.me { color: #ffd166; font-weight: 700; }
@@ -35,6 +35,7 @@
   #acts { right: max(12px, env(safe-area-inset-right)); width: 164px; height: 150px; }
   #acts button { width: 76px; height: 76px; border-radius: 50%; font-size: 15px; }
   #acts [data-k=attack] { right: 0; top: 0; background: #ff5d7366; } #acts [data-k=jump] { left: 0; top: 70px; background: #4cc9f066; }
+  @media (max-width: 440px) { #cards { gap: 6px; padding: 0 6px; } .pc { min-width: 0; padding: 4px 8px 6px; } } /* four cards fit a phone */
 </style>
 <script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
 </head>
@@ -368,12 +369,15 @@ const wire = (f) => ({ id: f.id, name: f.name, color: f.color, x: Math.round(f.x
 const colorOf = (id) => (id === me.id ? me.color : (S.entities.players?.[id] || {}).c || host.bots.get(id)?.color || (parseOnce("bots", S.shared.bots, []).find((b) => b.id === id) || {}).color || "#ccc");
 const nameOf = (id) => (id === me.id ? myName : (S.entities.players?.[id] || {}).n || host.bots.get(id)?.name || (parseOnce("bots", S.shared.bots, []).find((b) => b.id === id) || {}).name || match()?.names?.[id] || "Someone");
 
+/** A person whose tab closed without leaving: still in state (~30s) and in stocks (6s), but not live. Not drawn or counted. */
+const gone = (id, live) => id !== me.id && !!(S.entities.players || {})[id] && !live.includes(id);
 /** Everyone in this match as this screen shows them: other people and bots (eased), and me. */
 function fighters() {
-  const m = match(), out = [];
+  const m = match(), out = [], live = livePlayers();
   if (!m) return [me];
   for (const id of Object.keys(m.stocks)) {
     if (id === me.id) { out.push(me); continue; }
+    if (gone(id, live)) continue;
     const bot = host.acting && host.bots.get(id);
     if (bot) { out.push(bot); continue; }
     const v = views.get(id);
@@ -415,11 +419,12 @@ function publish(force) {
   const { id, name, color, ...rest } = wire(me);
   net.me.set("p", JSON.stringify(rest));
 }
-/** Two people in one color: the one with the higher sessionId picks a free color. */
+/** Two people in one color (or a bot has mine): the one with the higher sessionId picks a free color. */
 function fixColor() {
   const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId);
-  if (!others.some(([id, p]) => p.c === me.color && id < net.sessionId)) return;
-  const taken = new Set(others.map(([, p]) => p.c)), free = COLORS.find((c) => !taken.has(c));
+  const botColors = (host.acting ? [...host.bots.values()] : parseOnce("bots", S.shared.bots, [])).map((b) => b.color);
+  if (!others.some(([id, p]) => p.c === me.color && id < net.sessionId) && !botColors.includes(me.color)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...botColors]), free = COLORS.find((c) => !taken.has(c));
   if (free) { me.color = free; net.me.set("c", free); }
 }
 
@@ -536,12 +541,13 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 const dmgColor = (d) => `hsl(${Math.max(0, 55 - d * 0.45)}, 100%, ${Math.max(55, 92 - d * 0.35)}%)`;
 let board = null;
 const startedAt = performance.now();
+let dropped = false; // true while the connection is down: the HUD keeps showing "Reconnecting…"
 function hud(m) {
   const t = Date.now();
   $("msg").innerHTML = m.phase === "intro" ? String(Math.max(1, Math.ceil((m.startAt - t) / 1000))) : m.phase === "fight" && t - m.startAt < 800 ? "GO!" : m.phase === "over" && !$("over").hidden ? "" : m.phase === "over" ? "GAME!" : "";
   if (ATTRACT) { for (const id of ["cards", "hint", "net"]) $(id).textContent = ""; return; }
-  const list = fighters();
-  $("cards").innerHTML = Object.keys(m.stocks).map((id) => {
+  const list = fighters(), live = livePlayers();
+  $("cards").innerHTML = Object.keys(m.stocks).filter((id) => !gone(id, live)).map((id) => {
     const f = list.find((x) => x.id === id), n = m.stocks[id], d = f ? Math.round(f.dmg) : 0;
     return `<div class="pc ${n ? "" : "out"} ${id === me.id ? "me" : ""}" style="--c:${colorOf(id)}"><b style="color:${dmgColor(d)}">${d}%</b><small>${esc(id === me.id ? "You" : nameOf(id))}</small>${"<i></i>".repeat(n)}</div>`;
   }).join("");
@@ -550,7 +556,7 @@ function hud(m) {
   const touch = matchMedia("(pointer: coarse)").matches, portrait = H > W;
   $("hint").textContent = performance.now() - startedAt < 10000 ? (touch ? `D-pad to move · Jump · Hit (hold ▲ for an up-hit)${portrait ? " · turn your phone sideways for a bigger view" : ""}` : "Arrows to move · Z to jump (twice in the air) · X to hit · hold ↑ or ↓ while hitting") : "";
   const n = livePlayers().length;
-  $("net").textContent = net.offline ? "Offline: playing with bots" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the match" : ""}`;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the match" : ""}`;
   const showOver = m.phase === "over" && t > m.endsAt - CONFIG.resultsMs + 1500; // "GAME!" first, then the card
   $("over").hidden = !showOver;
   if (showOver) {
@@ -603,7 +609,7 @@ document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: fal
 // ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
 let last = performance.now(), lastHb = 0, lastHud = 0;
 function frame(now) {
-  const dt = Math.min(0.033, (now - last) / 1000); last = now;
+  const dt = Math.max(0, Math.min(0.033, (now - last) / 1000)); last = now; // never negative: the first frame can be stamped before `last`
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
   if (isHost()) hostTick(dt, now); else host.acting = false;
   syncViews(dt);
@@ -627,9 +633,10 @@ function frame(now) {
   });
   net.on("ko", (msg, from) => { if (host.acting && msg) applyKo(from, Number(msg.n) || 0); });
   net.on("again", () => { if (host.acting) host.again = true; });
-  net.onDisconnect(() => { $("net").textContent = "Reconnecting…"; });
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
   if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
-  const taken = new Set(Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c));
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...parse(S.shared.bots, []).map((b) => b.color)]);
   me.id = net.sessionId; me.color = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
   net.me.set({ n: myName, c: me.color, hb: Date.now() });
   if (ATTRACT) Object.assign(CONFIG, { stocks: 4, introMs: 300, resultsMs: 1200, damage: 14, knockGrow: 11, respawnMs: 600, invincibleMs: 600, botReact: 0.15 });

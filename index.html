@@ -261,19 +261,22 @@ function placeOnSpawn(f, m) {
 /** The bot brain: get back to the island, chase someone, swing when close. */
 function botControl(b, all, t) {
   const ctl = { x: 0, jump: false, attack: false, up: false, down: false };
-  const offStage = b.x < STAGE.x1 - 10 || b.x > STAGE.x2 + 10 || b.y > STAGE.y + 20;
+  const offStage = (!b.ground && (b.x < STAGE.x1 || b.x > STAGE.x2)) || b.y > STAGE.y + 20; // in the air past an edge, or below the top
   if (offStage) { // recover: steer home, jump when falling
-    ctl.x = Math.sign(600 - b.x);
-    if (b.vy > 100 && b.jumps > 0 && t > (b.jumpAt || 0)) { ctl.jump = true; b.jumpAt = t + 250; }
+    // below the island's rock (a jump there only bumps its underside): first get out from under it, then go up beside it
+    const mid = (STAGE.x1 + STAGE.x2) / 2, low = b.y - BODY.h > STAGE.y + STAGE.depth - 24, under = low && Math.abs(b.x - mid) < (STAGE.x2 - STAGE.x1) / 2 + 46;
+    ctl.x = under ? Math.sign(b.x - mid) || 1 : low ? 0 : Math.sign(mid - b.x);
+    if (!under && b.vy > 100 && b.jumps > 0 && t > (b.jumpAt || 0)) { ctl.jump = true; b.jumpAt = t + 250; }
     return ctl;
   }
-  const foes = all.filter((f) => f.id !== b.id && !f.out);
+  const onIsland = (f) => f.x > STAGE.x1 - 10 && f.x < STAGE.x2 + 10 && f.y <= STAGE.y + 20; // over the island: someone off it is left to fall (chasing them is how bots fell off)
+  const foes = all.filter((f) => f.id !== b.id && !f.out && onIsland(f));
   const tg = foes.find((f) => f.id === b.lastHitBy) || foes.sort((p, q) => Math.abs(p.x - b.x) + Math.abs(p.y - b.y) - Math.abs(q.x - b.x) - Math.abs(q.y - b.y))[0];
   if (!tg) return ctl;
   const dx = tg.x - b.x, dy = tg.y - b.y;
   if (Math.abs(dx) > 46) ctl.x = Math.sign(dx);
   const nextX = b.x + ctl.x * 40;
-  if (b.ground && (nextX < STAGE.x1 + 20 || nextX > STAGE.x2 - 20) && (tg.x < STAGE.x1 || tg.x > STAGE.x2)) ctl.x = 0; // don't chase off the edge
+  if ((nextX < STAGE.x1 + 20 && ctl.x < 0 && tg.x < STAGE.x1 + 10) || (nextX > STAGE.x2 - 20 && ctl.x > 0 && tg.x > STAGE.x2 - 10)) ctl.x = 0; // don't run off the edge after someone right at it
   if (dy < -70 && b.ground && t > (b.jumpAt || 0)) { ctl.jump = true; b.jumpAt = t + 500 + Math.random() * 500; }
   if (dy > 60 && Math.abs(dx) < 120) ctl.down = true; // drop through a platform toward them
   if (Math.abs(dx) < 66 && Math.abs(dy) < 70 && t > (b.swingAt || 0)) {

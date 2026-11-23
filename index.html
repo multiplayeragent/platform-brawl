@@ -244,10 +244,11 @@ function swingAt(a, targets) {
 }
 /** I (or, on the host, a bot) got hit: take the damage and fly. The farther, the higher my %. */
 function applyHit(f, hit, by) {
-  if (f.out || f.inv > Date.now()) return;
-  f.dmg = Math.min(999, f.dmg + Math.max(0, Math.min(30, Number(hit.d) || 0)));
+  const kx = Number(hit.kx) || 0, ky = Number(hit.ky) || 0, len = Math.hypot(kx, ky); // a direction only: a sent hit can't pick its own strength
+  if (f.out || f.inv > Date.now() || !len) return;
+  f.dmg = Math.min(999, f.dmg + Math.max(0, Math.min(Math.round(CONFIG.damage * MOVES.down.dmg), Number(hit.d) || 0))); // never more than the hardest real hit
   const speed = CONFIG.knockBase + f.dmg * CONFIG.knockGrow;
-  f.vx = hit.kx * speed; f.vy = hit.ky * speed; f.ground = false; f.atkT = 0;
+  f.vx = kx / len * speed; f.vy = ky / len * speed; f.ground = false; f.atkT = 0;
   f.stun = 0.12 + f.dmg * 0.0025; f.lastHitBy = by;
   if (f === me) { me.hurtAt = performance.now(); shake = Math.min(18, 4 + f.dmg / 10); sfx("hurt"); publish(true); }
 }
@@ -330,7 +331,7 @@ function hostTick(dt, now) {
   const inRoom = new Set(Object.keys(S.entities.players || {}));
   let stocks = m.stocks, names = m.names, changed = false;
   for (const id of humansHere()) {
-    if (id in stocks || m.phase === "over") continue;
+    if (id in stocks || id in names || m.phase === "over") continue; // in `names`: already fought in this match (dropped out or went silent), so no fresh stocks until the next one
     const seat = Object.keys(stocks).find((k) => host.bots.has(k));
     if (!seat) continue;
     stocks = { ...stocks, [id]: CONFIG.stocks }; delete stocks[seat]; host.bots.delete(seat);
@@ -400,6 +401,7 @@ function myTick(dt, m) {
   const t = Date.now();
   if (me.matchId !== m.id) { me.matchId = m.id; me.koN = (m.ko || {})[me.id] || 0; if (me.id in m.stocks) placeOnSpawn(me, m); else me.out = 1; }
   const inMatch = me.id in m.stocks;
+  if (!inMatch) me.out = 1; // dropped from this match (went silent): sit it out, unseen and unable to hit anyone
   if (me.out) {
     if (inMatch && m.stocks[me.id] > 0 && m.phase !== "over" && t >= me.respawnAt) { if (m.phase === "intro") placeOnSpawn(me, m); else respawnFighter(me); } // joined mid-match: drop in from the sky
     pressed.clear(); publish(false); return;
@@ -600,7 +602,7 @@ addEventListener("keydown", (e) => {
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 addEventListener("blur", () => keys.clear());
-addEventListener("pointerdown", () => { try { audio ||= new AudioContext(); } catch {} }, { once: true });
+for (const ev of ["pointerdown", "keydown"]) addEventListener(ev, () => { try { audio ||= new AudioContext(); } catch {} }, { once: true }); // sound for keyboard players too
 const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
 $("dpad").hidden = $("acts").hidden = !touchUI;
 for (const b of document.querySelectorAll(".pad button")) {
@@ -633,11 +635,13 @@ function frame(now) {
   net.onState((st) => { S = st; });
   net.on("hit", (msg, from) => {
     if (!msg) return;
-    const by = typeof msg.by === "string" ? msg.by : from, target = msg.to === me.id ? me : host.acting ? host.bots.get(msg.to) : null, a = views.get(by);
-    if (target && (!a || Math.hypot(a.x - target.x, a.y - target.y) < 260)) applyHit(target, msg, by); // only from someone near the one hit
+    // the sender is the attacker, except the host speaking for one of its bots
+    const by = from === livePlayers()[0] && typeof msg.by === "string" && !(S.entities.players || {})[msg.by] ? msg.by : from;
+    const target = msg.to === me.id ? me : host.acting ? host.bots.get(msg.to) : null, a = views.get(by) || (host.acting && host.bots.get(by)), m = match();
+    if (target && a && !a.out && m && m.stocks[by] > 0 && Math.hypot(a.x - target.x, a.y - target.y) < 260) applyHit(target, msg, by); // only from a fighter in this match, near the one hit
     const v = views.get(msg.to); if (v) burst(v.x, v.y - BODY.h / 2, "#fff", 8, 220);
   });
-  net.on("ko", (msg, from) => { if (host.acting && isHost() && msg) applyKo(from, Number(msg.n) || 0); }); // isHost(): not while my frames are stopped (it writes `match`)
+  net.on("ko", (msg, from) => { if (host.acting && isHost() && msg && Number.isInteger(msg.n)) applyKo(from, msg.n); }); // isHost(): not while my frames are stopped (it writes `match`)
   net.on("again", () => { if (host.acting) host.again = true; });
   net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
   net.onReconnect(() => { dropped = false; });
